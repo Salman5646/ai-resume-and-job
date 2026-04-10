@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 const UploadZone = dynamic(() => import("@/components/UploadZone").then(mod => mod.UploadZone), { ssr: false });
 
@@ -9,6 +9,73 @@ import { ExtractedInfo } from "@/lib/gemini";
 import { JobMatch } from "@/components/JobCard";
 import { Loader2, Sparkles, AlertCircle } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+
+const SCAN_MESSAGES = [
+  ["Deep Scanning Resume...", "AI Neural Processing"],
+  ["Extracting Skills & Experience...", "Pattern Recognition Active"],
+  ["Evaluating Career Trajectory...", "Insight Engine Running"],
+  ["Scoring Professional Profile...", "Calibrating Algorithms"],
+  ["Mapping Competency Vectors...", "Semantic Analysis"],
+  ["Detecting Hidden Strengths...", "Deep Learning Model"],
+  ["Building Your Career Report...", "Finalising Analysis"],
+];
+
+const MATCH_MESSAGES = [
+  ["Optimizing Job Matches...", "Compatibility Engine"],
+  ["Scanning 1,000+ Roles...", "Opportunity Mapping"],
+  ["Ranking Best Fit Positions...", "Relevance Scoring"],
+  ["Aligning Skills to Market...", "Market Intelligence"],
+  ["Calculating Match Scores...", "Neural Matching"],
+  ["Curating Top Opportunities...", "Results Ready Soon"],
+];
+
+function CyclingLoader({ phase }: { phase: "scan" | "match" }) {
+  const pool = phase === "scan" ? SCAN_MESSAGES : MATCH_MESSAGES;
+  const [idx, setIdx] = useState(0);
+
+  useEffect(() => {
+    setIdx(0);
+    const t = setInterval(() => setIdx(i => (i + 1) % pool.length), 2000);
+    return () => clearInterval(t);
+  }, [phase, pool.length]);
+
+  const [headline, sub] = pool[idx];
+
+  return (
+    <div className="mt-8 flex flex-col items-center gap-4">
+      <div className="relative">
+        <Loader2 className="w-9 h-9 text-cyan-500 animate-spin" />
+        <div className="absolute inset-0 rounded-full blur-md bg-cyan-500/20 animate-pulse" />
+      </div>
+      <div className="flex flex-col items-center text-center overflow-hidden">
+        <AnimatePresence mode="wait">
+          <motion.p
+            key={headline}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.35 }}
+            className="text-white font-semibold text-sm"
+          >
+            {headline}
+          </motion.p>
+        </AnimatePresence>
+        <AnimatePresence mode="wait">
+          <motion.p
+            key={sub}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.35, delay: 0.1 }}
+            className="text-cyan-400/60 text-[11px] mt-1 uppercase tracking-widest font-bold"
+          >
+            {sub}
+          </motion.p>
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
 
 export default function Home() {
   const [apiKey, setApiKey] = useState("");
@@ -123,17 +190,7 @@ export default function Home() {
             )}
 
             {isProcessing && (
-              <div className="mt-8 flex flex-col items-center gap-3">
-                <Loader2 className="w-8 h-8 text-cyan-500 animate-spin" />
-                <div className="flex flex-col items-center text-center">
-                  <p className="text-white font-medium text-sm animate-pulse">
-                    {!analysisData ? "Deep Scanning Resume..." : "Optimizing Job Matches..."}
-                  </p>
-                  <p className="text-white/40 text-[11px] mt-1 uppercase tracking-wider">
-                    AI Neural Processing
-                  </p>
-                </div>
-              </div>
+              <CyclingLoader phase={!analysisData ? "scan" : "match"} />
             )}
           </motion.div>
         ) : (

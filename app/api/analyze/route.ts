@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getGeminiModel, analyzeResumePrompt, callGeminiWithRetry } from "@/lib/gemini";
+import { analyzeResumePrompt, callGeminiWithRetry } from "@/lib/gemini";
 
 export async function POST(req: NextRequest) {
   try {
@@ -14,7 +14,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Resume text or file and API key are required" }, { status: 400 });
     }
 
-    const model = getGeminiModel(apiKey);
     const result = await callGeminiWithRetry(apiKey, analyzeResumePrompt(resumeText, fileData ? { data: fileData, mimeType: fileMimeType } : undefined));
     if (!result) throw new Error("Failed to get response from Gemini");
     const response = await result.response;

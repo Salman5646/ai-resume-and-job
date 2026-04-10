@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getGeminiModel, matchJobPrompt, callGeminiWithRetry } from "@/lib/gemini";
+import { matchJobPrompt, callGeminiWithRetry } from "@/lib/gemini";
 import { jobCatalog } from "@/lib/jobs";
 
 export async function POST(req: NextRequest) {
@@ -28,8 +28,6 @@ export async function POST(req: NextRequest) {
     const topJobs = scoredJobs
       .sort((a, b) => b.initialScore - a.initialScore)
       .slice(0, 5);
-
-    const model = getGeminiModel(apiKey);
 
     // Process top jobs to get AI reasoning
     // We'll do them in parallel or batch if possible, but for simplicity let's do one prompt per job or one big prompt
@@ -66,9 +64,14 @@ Return a JSON array of objects, one for each job ID:
     const matchedAnalysis = JSON.parse(cleanJson);
 
     // Merge analysis with job details
+    // Coerce IDs to string because the AI sometimes returns numeric IDs
     const finalResults = matchedAnalysis.map((analysis: any) => {
-      const jobDetails = jobCatalog.find(j => j.id === analysis.id);
-      return { ...jobDetails, ...analysis };
+      const jobDetails = jobCatalog.find(j => String(j.id) === String(analysis.id));
+      if (!jobDetails) {
+        console.warn(`No catalog entry found for job id: ${analysis.id}`);
+      }
+      // jobDetails spreads last so title/category/description always come from the catalog
+      return { ...analysis, ...jobDetails };
     }).sort((a: any, b: any) => b.matchPercentage - a.matchPercentage);
 
     return NextResponse.json(finalResults);

@@ -8,10 +8,51 @@ export const getGeminiModel = (apiKey: string) => {
   });
 };
 
-export const callGeminiWithRetry = async (apiKey: string, prompt: string | any[], retries = 5) => {
+/** Returns true if the error represents a quota that won't recover quickly (daily limit). */
+const isDailyQuotaExceeded = (error: any): boolean => {
+  const msg: string = error?.message ?? "";
+  return (
+    msg.includes("free_tier_requests") ||
+    msg.includes("PerDay") ||
+    msg.includes("quota") && msg.includes("limit: 0")
+  );
+};
+
+export const callGeminiWithRetry = async (apiKey: string, prompt: string | any[], retries = 3) => {
   const genAI = new GoogleGenerativeAI(apiKey);
-  // Try flash first, then pro if flash is consistently failing
-  const models = ["gemini-flash-latest", "gemini-pro-latest", "gemini-2.0-flash"];
+
+  // Dynamically fetch the models available to this API key so we never
+  // hardcode names that have been deprecated or aren't in this tier.
+  let models: string[] = [];
+  try {
+    const listRes = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`
+    );
+    if (listRes.ok) {
+      const listData = await listRes.json();
+      // Keep only gemini models that support generateContent, flash before pro
+      const available: string[] = (listData.models ?? [])
+        .filter((m: any) =>
+          m.name?.includes("gemini") &&
+          Array.isArray(m.supportedGenerationMethods) &&
+          m.supportedGenerationMethods.includes("generateContent")
+        )
+        .map((m: any) => (m.name as string).replace("models/", ""));
+
+      // Prefer flash variants first (faster + cheaper), then pro
+      models = [
+        ...available.filter(n => n.includes("flash")),
+        ...available.filter(n => !n.includes("flash")),
+      ];
+    }
+  } catch (_) { /* ignore, fall through to hardcoded list */ }
+
+  // Hardcoded safety net — only used if the ListModels call fails entirely
+  if (models.length === 0) {
+    models = ["gemini-2.0-flash", "gemini-2.0-flash-lite"];
+  }
+
+  console.log("Available models for this request:", models);
 
   for (let m = 0; m < models.length; m++) {
     const model = genAI.getGenerativeModel({
@@ -24,22 +65,46 @@ export const callGeminiWithRetry = async (apiKey: string, prompt: string | any[]
         const result = await model.generateContent(prompt);
         return result;
       } catch (error: any) {
-        if ((error.status === 503 || error.status === 429) && i < retries - 1) {
-          console.log(`Gemini ${models[m]} ${error.status} error, retrying (${i + 1}/${retries})...`);
-          await new Promise(resolve => setTimeout(resolve, 2000 * (i + 1)));
+        const is429 = error.status === 429;
+        const is503 = error.status === 503;
+        const is404 = error.status === 404;
+
+        // Model not found — skip immediately to the next model
+        if (is404 && m < models.length - 1) {
+          console.warn(`Model ${models[m]} not found (404), falling back to ${models[m + 1]}`);
+          break;
+        }
+
+        // Daily quota errors won't recover with a wait — jump to the next model immediately
+        if (is429 && isDailyQuotaExceeded(error)) {
+          console.warn(`Daily quota exceeded for ${models[m]}, switching model...`);
+          break; // skip remaining retries, try next model
+        }
+
+        // Transient rate-limit or service error — wait then retry on same model
+        if ((is429 || is503) && i < retries - 1) {
+          const waitMs = 3000 * (i + 1);
+          console.log(`Gemini ${models[m]} ${error.status}, retrying in ${waitMs}ms (${i + 1}/${retries})...`);
+          await new Promise(resolve => setTimeout(resolve, waitMs));
           continue;
         }
 
-        // If it's a 503/429 and we've exhausted retries for this model, try next model
-        if ((error.status === 503 || error.status === 429) && m < models.length - 1) {
+        // Exhausted retries on this model — try the next one if available
+        if ((is429 || is503) && m < models.length - 1) {
           console.log(`Exhausted retries for ${models[m]}, falling back to ${models[m + 1]}`);
-          break; // Break inner loop to try next model
+          break;
         }
 
         throw error;
       }
     }
   }
+
+  // All models exhausted
+  throw new Error(
+    "All available AI models have exceeded their quota. " +
+    "Please add your own Gemini API key in the field above, or try again later."
+  );
 };
 
 export interface ExtractedInfo {

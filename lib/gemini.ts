@@ -74,10 +74,11 @@ export const callGeminiWithRetry = async (apiKey: string, prompt: string | any[]
         const is429 = error.status === 429;
         const is503 = error.status === 503;
         const is404 = error.status === 404;
+        const is400 = error.status === 400;
 
-        // Model not found — skip immediately to the next model
-        if (is404 && m < models.length - 1) {
-          console.warn(`Model ${models[m]} not found (404), falling back to ${models[m + 1]}`);
+        // Model not found or doesn't support this input — skip to the next model
+        if ((is404 || is400) && m < models.length - 1) {
+          console.warn(`Model ${models[m]} error ${error.status}, falling back to ${models[m + 1]}`);
           break;
         }
 

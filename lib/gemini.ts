@@ -30,13 +30,19 @@ export const callGeminiWithRetry = async (apiKey: string, prompt: string | any[]
     );
     if (listRes.ok) {
       const listData = await listRes.json();
-      // Keep only gemini models that support generateContent, flash before pro
+      // Specialised model keywords that don't support general text/vision input
+      const BLOCKED = ["tts", "image", "computer-use", "robotics", "embedding", "aqa"];
+
       const available: string[] = (listData.models ?? [])
-        .filter((m: any) =>
-          m.name?.includes("gemini") &&
-          Array.isArray(m.supportedGenerationMethods) &&
-          m.supportedGenerationMethods.includes("generateContent")
-        )
+        .filter((m: any) => {
+          const name: string = m.name ?? "";
+          return (
+            name.includes("gemini") &&
+            Array.isArray(m.supportedGenerationMethods) &&
+            m.supportedGenerationMethods.includes("generateContent") &&
+            !BLOCKED.some(kw => name.toLowerCase().includes(kw))
+          );
+        })
         .map((m: any) => (m.name as string).replace("models/", ""));
 
       // Prefer flash variants first (faster + cheaper), then pro
@@ -49,7 +55,7 @@ export const callGeminiWithRetry = async (apiKey: string, prompt: string | any[]
 
   // Hardcoded safety net — only used if the ListModels call fails entirely
   if (models.length === 0) {
-    models = ["gemini-2.0-flash", "gemini-2.0-flash-lite"];
+    models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite"];
   }
 
   console.log("Available models for this request:", models);

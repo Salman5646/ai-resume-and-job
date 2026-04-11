@@ -211,11 +211,10 @@ export default function Home() {
       <footer className="w-full py-12 text-center border-t border-white/5 bg-black/20">
         <div className="max-w-6xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-6">
           <div className="text-white/20 text-xs uppercase tracking-[0.2em]">
-            &copy; 2026 AINN SLA &bull; Advanced AI Resume Intelligence
+            &copy; 2026 &bull; Advanced AI Resume Intelligence
           </div>
           <div className="flex gap-8 text-[10px] uppercase tracking-widest font-bold text-white/40">
-
-            <span className="text-cyan-500/50">Gemini 2.0 + TensorFlow NN</span>
+            <span className="text-cyan-500/50">Gemini 2.0 + Custom NumPy NN</span>
           </div>
         </div>
       </footer>

@@ -83,6 +83,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [analysisData, setAnalysisData] = useState<ExtractedInfo | null>(null);
   const [jobMatches, setJobMatches] = useState<JobMatch[]>([]);
+  const [scoringMethod, setScoringMethod] = useState<string>("gemini");
 
   const handleTextExtracted = async (text: string, fileData?: { data: string; mimeType: string }) => {
     setIsProcessing(true);
@@ -128,7 +129,9 @@ export default function Home() {
         throw new Error(matchData.error || "Failed to match jobs");
       }
 
-      const matches: JobMatch[] = matchData;
+      // New hybrid API returns { jobs, scoringMethod }
+      const matches: JobMatch[] = Array.isArray(matchData) ? matchData : (matchData.jobs ?? []);
+      setScoringMethod(matchData.scoringMethod ?? "gemini");
       setJobMatches(matches);
     } catch (err: any) {
       console.error(err);
@@ -200,7 +203,7 @@ export default function Home() {
             animate={{ opacity: 1 }}
             className="w-full"
           >
-            <ResultsView data={analysisData} matches={jobMatches} onReset={handleReset} />
+            <ResultsView data={analysisData} matches={jobMatches} onReset={handleReset} scoringMethod={scoringMethod} />
           </motion.div>
         )}
       </AnimatePresence>
@@ -211,9 +214,8 @@ export default function Home() {
             &copy; 2026 AINN SLA &bull; Advanced AI Resume Intelligence
           </div>
           <div className="flex gap-8 text-[10px] uppercase tracking-widest font-bold text-white/40">
-            <span className="hover:text-cyan-400 cursor-pointer transition-colors">Privacy Policy</span>
-            <span className="hover:text-cyan-400 cursor-pointer transition-colors">Terms of Service</span>
-            <span className="text-cyan-500/50">Powered by Gemini 2.0</span>
+
+            <span className="text-cyan-500/50">Gemini 2.0 + TensorFlow NN</span>
           </div>
         </div>
       </footer>

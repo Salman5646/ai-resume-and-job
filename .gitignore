@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Python ML Service
+__pycache__/
+ml_service/venv/
+ml_service/train.log

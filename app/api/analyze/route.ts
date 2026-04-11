@@ -4,9 +4,6 @@ import { analyzeResumePrompt, callGeminiWithRetry } from "@/lib/gemini";
 export async function POST(req: NextRequest) {
   try {
     const { resumeText, fileData, fileMimeType, apiKey: clientApiKey } = await req.json();
-    console.log("API: /api/analyze called");
-    console.log("Resume text length:", resumeText?.length);
-    console.log("Has File Data:", !!fileData);
 
     const apiKey = process.env.GEMINI_API_KEY || clientApiKey;
 
@@ -18,11 +15,17 @@ export async function POST(req: NextRequest) {
     if (!result) throw new Error("Failed to get response from Gemini");
     const response = await result.response;
     const text = response.text();
-    console.log("AI Response:", text);
 
     // Clean JSON response in case there are markdown blocks or extra text
     const cleanJson = text.replace(/```json/g, "").replace(/```/g, "").trim();
-    const rawData = JSON.parse(cleanJson);
+    let rawData;
+    try {
+      rawData = JSON.parse(cleanJson);
+    } catch (parseError) {
+      console.error("Failed to parse Gemini JSON:", parseError);
+      console.error("Raw text was:", cleanJson);
+      throw new Error("The AI model returned malformed information. Please try clicking 'Analyze' again.");
+    }
 
     // Ensure all fields exist with defaults
     const extractedInfo = {

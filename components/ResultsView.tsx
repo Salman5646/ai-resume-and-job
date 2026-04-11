@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { User, Mail, Phone, GraduationCap, Briefcase, Sparkles, Wand2, Loader2 } from "lucide-react";
+import { User, Mail, Phone, GraduationCap, Briefcase, Sparkles, Wand2, Loader2, BrainCircuit } from "lucide-react";
 import { CheckCircle2, AlertTriangle, Terminal } from "lucide-react";
 import { ScoreGauge } from "./ScoreGauge";
 import { JobCard, JobMatch } from "./JobCard";
@@ -12,9 +12,12 @@ interface ResultsViewProps {
   data: ExtractedInfo;
   matches: JobMatch[];
   onReset: () => void;
+  scoringMethod?: string;
 }
 
-export const ResultsView: React.FC<ResultsViewProps> = ({ data, matches, onReset }) => {
+export const ResultsView: React.FC<ResultsViewProps> = ({ data, matches, onReset, scoringMethod = "gemini" }) => {
+  const isNeuralNetwork = scoringMethod === "neural_network";
+  const isFallback = scoringMethod === "skill_overlap_fallback" || scoringMethod === "jaccard_fallback";
   const hasSkills = data.skills?.length > 0;
   const hasSoftSkills = data.softSkills?.length > 0;
   const hasEducation = data.education?.length > 0;
@@ -27,6 +30,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ data, matches, onReset
     data.scoreBreakdown &&
     (data.scoreBreakdown.technical || data.scoreBreakdown.experience ||
       data.scoreBreakdown.education || data.scoreBreakdown.presentation);
+
+  const displayMatches = [...matches]
+    .filter((m) => (m.nnRankScore ?? m.matchPercentage) > 0)
+    .sort((a, b) => (b.nnRankScore ?? b.matchPercentage) - (a.nnRankScore ?? a.matchPercentage));
 
   return (
     <div className="w-full max-w-6xl mx-auto py-12 px-6">
@@ -136,8 +143,20 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ data, matches, onReset
 
         {/* Middle/Main Column: Detailed Insights */}
         <div className="lg:col-span-2 space-y-8">
+          {hasSummary && (
+            <div className="glass-card p-8">
+              <div className="flex items-center gap-3 mb-6">
+                <Wand2 className="w-5 h-5 text-purple-400" />
+                <h3 className="text-lg font-bold">Executive Summary</h3>
+              </div>
+              <p className="text-white/70 leading-relaxed text-lg italic">
+                "{data.summary}"
+              </p>
+            </div>
+          )}
+
           {(hasStrengths || hasImprovements) && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className={`grid grid-cols-1 ${hasStrengths && hasImprovements ? 'md:grid-cols-2' : ''} gap-6`}>
               {hasStrengths && (
                 <div className="glass-card p-6 border-l-4 border-l-emerald-500/50">
                   <h3 className="text-sm font-bold text-emerald-400 mb-4 flex items-center gap-2">
@@ -166,18 +185,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ data, matches, onReset
                   </ul>
                 </div>
               )}
-            </div>
-          )}
-
-          {hasSummary && (
-            <div className="glass-card p-8">
-              <div className="flex items-center gap-3 mb-6">
-                <Wand2 className="w-5 h-5 text-purple-400" />
-                <h3 className="text-lg font-bold">Executive Summary</h3>
-              </div>
-              <p className="text-white/70 leading-relaxed text-lg italic">
-                "{data.summary}"
-              </p>
             </div>
           )}
 
@@ -258,21 +265,46 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ data, matches, onReset
         <div className="text-center mb-12">
           <h2 className="text-3xl font-bold font-display mb-2">Optimized <span className="gradient-text">Job Matches</span></h2>
           <p className="text-white/40">These roles best align with your current skill profile and career trajectory</p>
+          <div className="flex items-center justify-center gap-2 mt-4">
+            {isNeuralNetwork && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-purple-500/10 border border-purple-500/30 text-purple-300 text-xs font-bold uppercase tracking-widest">
+                <BrainCircuit className="w-3 h-3" />
+                Ranked by Neural Network
+              </span>
+            )}
+            {isFallback && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-bold uppercase tracking-widest">
+                ⚡ Skill Overlap Ranking
+              </span>
+            )}
+            {!isNeuralNetwork && !isFallback && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-xs font-bold uppercase tracking-widest">
+                <Sparkles className="w-3 h-3" />
+                Gemini AI Ranked
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {matches.length > 0 ? (
-            matches.map((job, i) => (
+          {displayMatches.length > 0 ? (
+            displayMatches.map((job, i) => (
               <JobCard key={job.id} job={job} index={i} />
             ))
           ) : (
-            Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="glass-card p-6 h-[200px] flex flex-col items-center justify-center gap-4 animate-pulse">
-                <Loader2 className="w-8 h-8 text-white/10" />
-                <div className="h-4 w-32 bg-white/5 rounded-full" />
-                <div className="h-3 w-48 bg-white/5 rounded-full" />
+            matches.length === 0 ? (
+              Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="glass-card p-6 h-[200px] flex flex-col items-center justify-center gap-4 animate-pulse">
+                  <Loader2 className="w-8 h-8 text-white/10" />
+                  <div className="h-4 w-32 bg-white/5 rounded-full" />
+                  <div className="h-3 w-48 bg-white/5 rounded-full" />
+                </div>
+              ))
+            ) : (
+              <div className="col-span-full text-center text-white/40 py-12">
+                No higher matching jobs found for this profile.
               </div>
-            ))
+            )
           )}
         </div>
       </div>

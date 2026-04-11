@@ -2,81 +2,170 @@ import { NextRequest, NextResponse } from "next/server";
 import { matchJobPrompt, callGeminiWithRetry } from "@/lib/gemini";
 import { jobCatalog } from "@/lib/jobs";
 
+const ML_SERVICE_URL = process.env.ML_SERVICE_URL || "http://localhost:8000";
+
+/**
+ * POST /api/match
+ *
+ * Hybrid AI pipeline:
+ *  1. Neural Network (Python FastAPI) → ranks all jobs by similarity score
+ *  2. Gemini LLM → provides human-readable reasoning + improvement tips
+ *     for the top-5 NN-selected jobs
+ *
+ * Fallback: if NN service is unavailable, falls back to skill-overlap scoring.
+ */
 export async function POST(req: NextRequest) {
   try {
     const { extractedInfo, apiKey: clientApiKey } = await req.json();
-    console.log("API: /api/match called");
+    console.log("\n[match] ── Hybrid Match Pipeline ──────────────────");
     const apiKey = process.env.GEMINI_API_KEY || clientApiKey;
 
     if (!extractedInfo || !apiKey) {
-      return NextResponse.json({ error: "Extracted info and API key are required" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Extracted info and API key are required" },
+        { status: 400 }
+      );
     }
 
-    const { skills, experience } = extractedInfo;
-    const experienceText = experience.map((exp: any) => `${exp.role} at ${exp.company}`).join(", ");
+    const { skills, experience, softSkills, summary } = extractedInfo;
+    const experienceText = experience
+      .map((e: any) => `${e.role} at ${e.company}`)
+      .join(", ");
 
-    // For each job in the catalog, let's do a basic skill overlap check first to filter
-    // Then use Gemini for the top 5 matches to get detailed analysis
-    const scoredJobs = jobCatalog.map(job => {
-      const matched = job.requiredSkills.filter(s =>
-        skills.some((userSkill: string) => userSkill.toLowerCase().includes(s.toLowerCase()) || s.toLowerCase().includes(userSkill.toLowerCase()))
-      );
-      const score = (matched.length / job.requiredSkills.length) * 100;
-      return { ...job, initialScore: score, matchedSkills: matched };
-    });
+    // ──────────────────────────────────────────────────────────────────────
+    // STEP 1 — Neural Network Ranking
+    // ──────────────────────────────────────────────────────────────────────
+    let topJobs: any[] = [];
+    let scoringMethod = "skill_overlap_fallback";
 
-    const topJobs = scoredJobs
-      .sort((a, b) => b.initialScore - a.initialScore)
-      .slice(0, 5);
+    try {
+      console.log("[match] [NN] Calling ML service …");
+      const controller = new AbortController();
+      const tid = setTimeout(() => controller.abort(), 8_000);
 
-    // Process top jobs to get AI reasoning
-    // We'll do them in parallel or batch if possible, but for simplicity let's do one prompt per job or one big prompt
-    // One big prompt is better for speed
+      const nnRes = await fetch(`${ML_SERVICE_URL}/predict-all`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          candidate_skills: skills,
+          jobs: jobCatalog.map((j) => ({
+            id: j.id,
+            title: j.title,
+            requiredSkills: j.requiredSkills,
+          })),
+        }),
+        signal: controller.signal,
+      }).finally(() => clearTimeout(tid));
+
+      if (nnRes.ok) {
+        const nnData = await nnRes.json();
+        scoringMethod = nnData.scoring_method === "neural_network"
+          ? "neural_network"
+          : "jaccard_fallback";
+
+        topJobs = nnData.results.slice(0, 5).map((r: any) => {
+          const catalogEntry = jobCatalog.find((j) => j.id === r.id)!;
+          return {
+            ...catalogEntry,
+            nnScore: r.score,
+            initialScore: Math.round(r.score * 100),
+          };
+        });
+
+        console.log(`[match] [NN] ✅ Top-5 by ${scoringMethod}:`,
+          topJobs.map((j) => `${j.title}(${j.initialScore}%)`).join(", "));
+      } else {
+        throw new Error(`ML service returned ${nnRes.status}`);
+      }
+
+    } catch (nnErr: any) {
+      const reason = nnErr?.name === "AbortError" ? "timeout" : nnErr.message;
+      console.warn(`[match] [NN] ⚠️  Unavailable (${reason}) — falling back to skill overlap`);
+      scoringMethod = "skill_overlap_fallback";
+
+      // ── Fallback: keyword overlap ──────────────────────────────────────
+      const scored = jobCatalog.map((job) => {
+        const matched = job.requiredSkills.filter((s) =>
+          skills.some(
+            (u: string) =>
+              u.toLowerCase().includes(s.toLowerCase()) ||
+              s.toLowerCase().includes(u.toLowerCase())
+          )
+        );
+        return { ...job, initialScore: Math.round((matched.length / job.requiredSkills.length) * 100), nnScore: null };
+      });
+      topJobs = scored.sort((a, b) => b.initialScore - a.initialScore).slice(0, 5);
+      console.log("[match] [Fallback] Top-5:",
+        topJobs.map((j) => `${j.title}(${j.initialScore}%)`).join(", "));
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // STEP 2 — Gemini LLM: reasoning + tips for NN-selected top-5
+    // ──────────────────────────────────────────────────────────────────────
+    console.log("[match] [Gemini] Generating reasoning for top-5 jobs …");
+
     const batchPrompt = `
-Analyze how well the candidate matches these ${topJobs.length} jobs.
+You are a career advisor. Explain why the candidate matches (or partially matches) each job below.
+Do NOT re-rank — just provide reasoning for the order given.
+
 Candidate Skills: ${skills.join(", ")}
-Candidate Soft Skills: ${extractedInfo.softSkills?.join(", ")}
-Candidate Experience: ${experienceText}
-Summary: ${extractedInfo.summary}
+Soft Skills: ${softSkills?.join(", ") ?? "N/A"}
+Experience: ${experienceText}
+Summary: ${summary}
 
-Jobs to analyze:
-${topJobs.map(j => `ID: ${j.id}, Title: ${j.title}, Requirements: ${j.requiredSkills.join(", ")}`).join("\n")}
+Jobs to explain (already ranked by AI model):
+${topJobs.map((j, i) => `#${i + 1} ID:${j.id} | ${j.title} | Requires: ${j.requiredSkills.join(", ")}`).join("\n")}
 
-Return a JSON array of objects, one for each job ID:
+Return a JSON array — one object per job, preserving the same order:
 [
   {
     "id": "job_id",
     "matchPercentage": 0-100,
     "matchedSkills": ["Skill 1", ...],
     "missingSkills": ["Skill A", ...],
-    "reasoning": "Brief explanation",
-    "recommendation": "One specific actionable tip to improve match (e.g., 'Gain experience with Docker')"
-  },
-  ...
+    "reasoning": "2-3 sentence explanation of this match",
+    "recommendation": "One specific actionable tip to close the skill gap"
+  }
 ]
 `;
 
-    const result = await callGeminiWithRetry(apiKey, batchPrompt);
-    if (!result) throw new Error("Failed to get match analysis from Gemini");
-    const response = await result.response;
-    const text = response.text();
-    const cleanJson = text.replace(/```json/g, "").replace(/```/g, "").trim();
-    const matchedAnalysis = JSON.parse(cleanJson);
+    const geminiResult = await callGeminiWithRetry(apiKey, batchPrompt);
+    if (!geminiResult) throw new Error("No response from Gemini");
 
-    // Merge analysis with job details
-    // Coerce IDs to string because the AI sometimes returns numeric IDs
-    const finalResults = matchedAnalysis.map((analysis: any) => {
-      const jobDetails = jobCatalog.find(j => String(j.id) === String(analysis.id));
-      if (!jobDetails) {
-        console.warn(`No catalog entry found for job id: ${analysis.id}`);
-      }
-      // jobDetails spreads last so title/category/description always come from the catalog
-      return { ...analysis, ...jobDetails };
-    }).sort((a: any, b: any) => b.matchPercentage - a.matchPercentage);
+    const raw = (await geminiResult.response).text();
+    const cleanJson = raw.replace(/```json/g, "").replace(/```/g, "").trim();
+    let geminiAnalysis: any[] = [];
+    try {
+      geminiAnalysis = JSON.parse(cleanJson);
+    } catch (parseError) {
+      console.error("[match] JSON Parse Error on raw API output:", cleanJson);
+      throw new Error("AI returned malformed reasoning data. Please try again.");
+    }
 
-    return NextResponse.json(finalResults);
+    // ──────────────────────────────────────────────────────────────────────
+    // STEP 3 — Merge: NN score + Gemini reasoning + catalog details
+    // ──────────────────────────────────────────────────────────────────────
+    const finalResults = topJobs.map((nnJob) => {
+      const analysis = geminiAnalysis.find((a) => String(a.id) === String(nnJob.id)) || {};
+      const catalog = jobCatalog.find((j) => String(j.id) === String(nnJob.id));
+
+      return {
+        ...analysis,
+        ...catalog,             // authoritative catalog fields (title, category, description)
+        nnScore: nnJob.nnScore ?? null,
+        nnRankScore: nnJob.initialScore ?? analysis.matchPercentage,
+        scoringMethod,          // tells the UI how jobs were ranked
+      };
+    });
+
+    console.log("[match] ── Pipeline complete ──────────────────────────\n");
+    return NextResponse.json({ jobs: finalResults, scoringMethod });
+
   } catch (error: any) {
-    console.error("Matching Error:", error);
-    return NextResponse.json({ error: error.message || "Failed to match jobs" }, { status: 500 });
+    console.error("[match] ❌ Error:", error.message);
+    return NextResponse.json(
+      { error: error.message || "Failed to match jobs" },
+      { status: 500 }
+    );
   }
 }
